@@ -1,29 +1,26 @@
 //! Test application to list all available outputs.
 
-use std::marker::PhantomData;
-
 use smithay_client_toolkit::{
-    delegate_output, delegate_registry,
-    output::{OutputDispatch, OutputHandler, OutputInfo, OutputState},
-    registry::RegistryHandle,
+    delegate_registry,
+    output::{OutputHandler, OutputInfo, OutputState},
+    registry::RegistryState,
 };
-use wayland_client::{protocol::wl_output, Connection, ConnectionHandle, QueueHandle};
+use wayland_client::{
+    delegate_dispatch, protocol::wl_output, Connection, ConnectionHandle, QueueHandle,
+};
+use wayland_protocols::unstable::xdg_output::v1::client::{zxdg_output_manager_v1, zxdg_output_v1};
 
 struct ListOutputs {
-    inner: InnerApp,
-    registry_handle: RegistryHandle,
+    registry_state: RegistryState,
     output_state: OutputState,
 }
 
-struct InnerApp;
-
 // OutputHandler's functions are called as outputs are made available, updated and destroyed.
-impl OutputHandler<ListOutputs> for InnerApp {
+impl OutputHandler<Self> for ListOutputs {
     fn new_output(
         &mut self,
         _conn: &mut ConnectionHandle,
-        _qh: &QueueHandle<ListOutputs>,
-        _state: &OutputState,
+        _qh: &QueueHandle<Self>,
         _output: wl_output::WlOutput,
     ) {
     }
@@ -32,7 +29,6 @@ impl OutputHandler<ListOutputs> for InnerApp {
         &mut self,
         _conn: &mut ConnectionHandle,
         _qh: &QueueHandle<ListOutputs>,
-        _state: &OutputState,
         _output: wl_output::WlOutput,
     ) {
     }
@@ -41,25 +37,29 @@ impl OutputHandler<ListOutputs> for InnerApp {
         &mut self,
         _conn: &mut ConnectionHandle,
         _qh: &QueueHandle<ListOutputs>,
-        _state: &OutputState,
         _output: wl_output::WlOutput,
     ) {
     }
+
+    fn state(&mut self) -> &mut OutputState {
+        &mut self.output_state
+    }
 }
 
-delegate_output!(ListOutputs => InnerApp: |app| {
-    &mut OutputDispatch(&mut app.output_state, &mut app.inner, PhantomData)
-});
+delegate_dispatch!(ListOutputs: [wl_output::WlOutput, zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1::ZxdgOutputV1] => OutputState);
+
+// delegate_output!(ListOutputs => InnerApp: |app| {
+//     &mut OutputDispatch(&mut app.output_state, &mut app.inner, PhantomData)
+// });
 
 // Delegate wl_registry to provide the wl_output globals to OutputState
-delegate_registry!(ListOutputs:
-    |app| {
-        &mut app.registry_handle
-    },
-    handlers = [
-        { &mut OutputDispatch(&mut app.output_state, &mut app.inner, PhantomData) }
-    ]
-);
+delegate_registry!(ListOutputs: [OutputState]);
+
+impl AsMut<RegistryState> for ListOutputs {
+    fn as_mut(&mut self) -> &mut RegistryState {
+        &mut self.registry_state
+    }
+}
 
 fn main() {
     env_logger::init();
@@ -74,9 +74,7 @@ fn main() {
     let registry = display.get_registry(&mut conn.handle(), &qh, ()).unwrap();
 
     let mut list_outputs = ListOutputs {
-        inner: InnerApp,
-
-        registry_handle: RegistryHandle::new(registry),
+        registry_state: RegistryState::new(registry),
         output_state: OutputState::new(),
     };
     event_queue.blocking_dispatch(&mut list_outputs).unwrap();

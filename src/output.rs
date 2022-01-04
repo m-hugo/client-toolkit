@@ -13,15 +13,16 @@ use wayland_protocols::unstable::xdg_output::v1::client::{
     zxdg_output_v1,
 };
 
-use crate::registry::{RegistryHandle, RegistryHandler};
+use crate::registry::{RegistryHandler, RegistryState};
 
 pub trait OutputHandler<D> {
+    fn state(&mut self) -> &mut OutputState;
+
     /// A new output has been advertised.
     fn new_output(
         &mut self,
         conn: &mut ConnectionHandle,
         qh: &QueueHandle<D>,
-        state: &OutputState,
         output: wl_output::WlOutput,
     );
 
@@ -30,7 +31,6 @@ pub trait OutputHandler<D> {
         &mut self,
         conn: &mut ConnectionHandle,
         qh: &QueueHandle<D>,
-        state: &OutputState,
         output: wl_output::WlOutput,
     );
 
@@ -41,7 +41,6 @@ pub trait OutputHandler<D> {
         &mut self,
         conn: &mut ConnectionHandle,
         qh: &QueueHandle<D>,
-        state: &OutputState,
         output: wl_output::WlOutput,
     );
 }
@@ -242,19 +241,16 @@ macro_rules! delegate_output {
     };
 }
 
-impl<D, H: OutputHandler<D>> DelegateDispatchBase<wl_output::WlOutput>
-    for OutputDispatch<'_, D, H>
-{
+impl DelegateDispatchBase<wl_output::WlOutput> for OutputState {
     type UserData = OutputData;
 }
 
-impl<D, H> DelegateDispatch<wl_output::WlOutput, D> for OutputDispatch<'_, D, H>
+impl<D> DelegateDispatch<wl_output::WlOutput, D> for OutputState
 where
-    H: OutputHandler<D>,
-    D: Dispatch<wl_output::WlOutput, UserData = Self::UserData>,
+    D: Dispatch<wl_output::WlOutput, UserData = Self::UserData> + OutputHandler<D>,
 {
     fn event(
-        &mut self,
+        state: &mut D,
         output: &wl_output::WlOutput,
         event: wl_output::Event,
         data: &Self::UserData,
@@ -272,8 +268,8 @@ where
                 model,
                 transform,
             } => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| &inner.wl_output == output)
@@ -295,8 +291,8 @@ where
             }
 
             wl_output::Event::Mode { flags, width, height, refresh } => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| &inner.wl_output == output)
@@ -351,8 +347,8 @@ where
             }
 
             wl_output::Event::Scale { factor } => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| &inner.wl_output == output)
@@ -363,8 +359,8 @@ where
             }
 
             wl_output::Event::Name { name } => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| &inner.wl_output == output)
@@ -375,8 +371,8 @@ where
             }
 
             wl_output::Event::Description { description } => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| &inner.wl_output == output)
@@ -387,8 +383,8 @@ where
             }
 
             wl_output::Event::Done => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| &inner.wl_output == output)
@@ -413,9 +409,9 @@ where
 
                 if inner.just_created {
                     inner.just_created = false;
-                    self.1.new_output(conn, qh, self.0, output.clone());
+                    state.new_output(conn, qh, output.clone());
                 } else {
-                    self.1.update_output(conn, qh, self.0, output.clone());
+                    state.update_output(conn, qh, output.clone());
                 }
             }
 
@@ -424,20 +420,16 @@ where
     }
 }
 
-impl<D, H: OutputHandler<D>> DelegateDispatchBase<zxdg_output_manager_v1::ZxdgOutputManagerV1>
-    for OutputDispatch<'_, D, H>
-{
+impl DelegateDispatchBase<zxdg_output_manager_v1::ZxdgOutputManagerV1> for OutputState {
     type UserData = ();
 }
 
-impl<D, H> DelegateDispatch<zxdg_output_manager_v1::ZxdgOutputManagerV1, D>
-    for OutputDispatch<'_, D, H>
+impl<D> DelegateDispatch<zxdg_output_manager_v1::ZxdgOutputManagerV1, D> for OutputState
 where
-    H: OutputHandler<D>,
     D: Dispatch<zxdg_output_manager_v1::ZxdgOutputManagerV1, UserData = Self::UserData>,
 {
     fn event(
-        &mut self,
+        _: &mut D,
         _: &zxdg_output_manager_v1::ZxdgOutputManagerV1,
         _: zxdg_output_manager_v1::Event,
         _: &Self::UserData,
@@ -448,19 +440,16 @@ where
     }
 }
 
-impl<D, H: OutputHandler<D>> DelegateDispatchBase<zxdg_output_v1::ZxdgOutputV1>
-    for OutputDispatch<'_, D, H>
-{
+impl DelegateDispatchBase<zxdg_output_v1::ZxdgOutputV1> for OutputState {
     type UserData = OutputData;
 }
 
-impl<D, H> DelegateDispatch<zxdg_output_v1::ZxdgOutputV1, D> for OutputDispatch<'_, D, H>
+impl<D> DelegateDispatch<zxdg_output_v1::ZxdgOutputV1, D> for OutputState
 where
-    H: OutputHandler<D>,
-    D: Dispatch<zxdg_output_v1::ZxdgOutputV1, UserData = Self::UserData>,
+    D: Dispatch<zxdg_output_v1::ZxdgOutputV1, UserData = Self::UserData> + OutputHandler<D>,
 {
     fn event(
-        &mut self,
+        state: &mut D,
         output: &zxdg_output_v1::ZxdgOutputV1,
         event: zxdg_output_v1::Event,
         data: &Self::UserData,
@@ -473,8 +462,8 @@ where
             zxdg_output_v1::Event::LogicalSize { width: _, height: _ } => (),
 
             zxdg_output_v1::Event::Name { name } => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| inner.xdg_output.as_ref() == Some(output))
@@ -485,8 +474,8 @@ where
             }
 
             zxdg_output_v1::Event::Description { description } => {
-                let inner = self
-                    .0
+                let inner = state
+                    .state()
                     .outputs
                     .iter_mut()
                     .find(|inner| inner.xdg_output.as_ref() == Some(output))
@@ -499,8 +488,8 @@ where
             zxdg_output_v1::Event::Done => {
                 // This event is deprecated starting in version 3, wl_output::done should be sent instead.
                 if output.version() < 3 {
-                    let inner = self
-                        .0
+                    let inner = state
+                        .state()
                         .outputs
                         .iter_mut()
                         .find(|inner| inner.xdg_output.as_ref() == Some(output))
@@ -523,9 +512,9 @@ where
 
                     if !pending_wl {
                         if just_created {
-                            self.1.new_output(conn, qh, self.0, output);
+                            state.new_output(conn, qh, output);
                         } else {
-                            self.1.update_output(conn, qh, self.0, output);
+                            state.update_output(conn, qh, output);
                         }
                     }
                 }
@@ -536,26 +525,27 @@ where
     }
 }
 
-impl<D, H> RegistryHandler<D> for OutputDispatch<'_, D, H>
+impl<D> RegistryHandler<D> for OutputState
 where
-    H: OutputHandler<D>,
     D: Dispatch<wl_output::WlOutput, UserData = OutputData>
         + Dispatch<zxdg_output_v1::ZxdgOutputV1, UserData = OutputData>
         + Dispatch<zxdg_output_manager_v1::ZxdgOutputManagerV1, UserData = ()>
+        + OutputHandler<D>
+        + AsMut<RegistryState>
         + 'static,
 {
     fn new_global(
-        &mut self,
+        data: &mut D,
         conn: &mut ConnectionHandle,
         qh: &QueueHandle<D>,
         name: u32,
         interface: &str,
         version: u32,
-        handle: &mut RegistryHandle,
     ) {
         match interface {
             "wl_output" => {
-                let wl_output = handle
+                let wl_output = data
+                    .as_mut()
                     .bind_cached::<wl_output::WlOutput, _, _, _>(conn, qh, name, || {
                         (u32::min(version, 4), OutputData::new())
                     })
@@ -573,23 +563,24 @@ where
 
                     pending_info: OutputInfo::new(name),
                     pending_wl: true,
-                    pending_xdg: self.0.xdg.is_some(),
+                    pending_xdg: data.state().xdg.is_some(),
                 };
 
-                self.0.outputs.push(inner);
+                data.state().outputs.push(inner);
 
-                if self.0.xdg.is_some() {
-                    let xdg = self.0.xdg.as_ref().unwrap();
+                if data.state().xdg.is_some() {
+                    let xdg = data.state().xdg.as_ref().unwrap();
 
-                    let data = wl_output.data::<OutputData>().unwrap().clone();
+                    let output_data = wl_output.data::<OutputData>().unwrap().clone();
 
-                    let xdg_output = xdg.get_xdg_output(conn, &wl_output, qh, data).unwrap();
-                    self.0.outputs.last_mut().unwrap().xdg_output = Some(xdg_output);
+                    let xdg_output = xdg.get_xdg_output(conn, &wl_output, qh, output_data).unwrap();
+                    data.state().outputs.last_mut().unwrap().xdg_output = Some(xdg_output);
                 }
             }
 
             "zxdg_output_manager_v1" => {
-                let global = handle
+                let global = data
+                    .as_mut()
                     .bind_once::<zxdg_output_manager_v1::ZxdgOutputManagerV1, _, _>(
                         conn,
                         qh,
@@ -599,13 +590,13 @@ where
                     )
                     .expect("Failed to bind global");
 
-                self.0.xdg = Some(global);
+                data.state().xdg = Some(global);
 
-                let xdg = self.0.xdg.as_ref().unwrap();
+                let xdg = data.state().xdg.as_ref().unwrap().clone();
 
                 // Because the order in which globals are advertised is undefined, we need to get the extension of any
                 // wl_output we have already gotten.
-                self.0.outputs.iter_mut().for_each(|output| {
+                data.state().outputs.iter_mut().for_each(|output| {
                     let data = output.wl_output.data::<OutputData>().unwrap().clone();
 
                     let xdg_output = xdg.get_xdg_output(conn, &output.wl_output, qh, data).unwrap();
@@ -617,10 +608,10 @@ where
         }
     }
 
-    fn remove_global(&mut self, conn: &mut ConnectionHandle, qh: &QueueHandle<D>, name: u32) {
+    fn remove_global(state: &mut D, conn: &mut ConnectionHandle, qh: &QueueHandle<D>, name: u32) {
         let mut destroyed = vec![];
 
-        self.0.outputs.retain(|inner| {
+        state.state().outputs.retain(|inner| {
             let destroy = inner.name != name;
 
             if destroy {
@@ -637,7 +628,7 @@ where
         });
 
         for output in destroyed {
-            self.1.output_destroyed(conn, qh, self.0, output);
+            state.output_destroyed(conn, qh, output);
         }
     }
 }
