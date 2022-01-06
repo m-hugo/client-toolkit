@@ -28,6 +28,17 @@ pub enum SurfaceError {
     Protocol(#[from] InvalidId),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum SubsurfaceError {
+    /// The subcompositor global is not available.
+    #[error("the subcompositor global is not available")]
+    MissingSubcompositorGlobal,
+
+    /// Protocol error.
+    #[error(transparent)]
+    Protocol(#[from] InvalidId),
+}
+
 pub trait CompositorHandler: Sized {
     fn compositor_state(&mut self) -> &mut CompositorState;
 
@@ -87,6 +98,24 @@ impl CompositorState {
 
         Ok(surface)
     }
+
+    pub fn create_subsurface<D>(
+        &self,
+        conn: &mut ConnectionHandle,
+        qh: &QueueHandle<D>,
+        parent: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
+    ) -> Result<Subsurface, SubsurfaceError>
+    where
+        D: Dispatch<wl_subsurface::WlSubsurface, UserData = ()> + 'static,
+    {
+        let (_, subcompositor) =
+            self.wl_subcompositor.as_ref().ok_or(SubsurfaceError::MissingSubcompositorGlobal)?;
+
+        let subsurface = subcompositor.get_subsurface(conn, surface, parent, qh, ())?;
+
+        Ok(Subsurface { subsurface, parent: parent.clone(), surface: surface.clone() })
+    }
 }
 
 /// Data associated with a [`WlSurface`](wl_surface::WlSurface).
@@ -100,6 +129,31 @@ pub struct SurfaceData {
 
     /// Whether the surface has a role object.
     pub(crate) has_role: AtomicBool,
+}
+
+#[derive(Debug)]
+pub struct Subsurface {
+    subsurface: wl_subsurface::WlSubsurface,
+    parent: wl_surface::WlSurface,
+    surface: wl_surface::WlSurface,
+}
+
+impl Subsurface {
+    pub fn parent(&self) -> &wl_surface::WlSurface {
+        &self.parent
+    }
+
+    pub fn wl_surface(&self) -> &wl_surface::WlSurface {
+        &self.surface
+    }
+
+    pub fn wl_subsurface(&self) -> &wl_subsurface::WlSubsurface {
+        &self.subsurface
+    }
+
+    pub fn destroy(self, conn: &mut ConnectionHandle) {
+        self.subsurface.destroy(conn);
+    }
 }
 
 #[macro_export]
@@ -218,7 +272,6 @@ where
 }
 
 impl DelegateDispatchBase<wl_subsurface::WlSubsurface> for CompositorState {
-    // TODO what data do we want?
     type UserData = ();
 }
 
@@ -230,7 +283,7 @@ where
         _: &mut D,
         _: &wl_subsurface::WlSubsurface,
         _: wl_subsurface::Event,
-        _: &(),
+        _: &Self::UserData,
         _: &mut ConnectionHandle,
         _: &QueueHandle<D>,
     ) {
