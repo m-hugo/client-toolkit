@@ -5,7 +5,9 @@ use std::sync::{
 
 use wayland_backend::client::InvalidId;
 use wayland_client::{
-    protocol::{wl_callback, wl_compositor, wl_output, wl_surface},
+    protocol::{
+        wl_callback, wl_compositor, wl_output, wl_subcompositor, wl_subsurface, wl_surface,
+    },
     ConnectionHandle, DelegateDispatch, DelegateDispatchBase, Dispatch, Proxy, QueueHandle,
 };
 
@@ -54,11 +56,12 @@ pub trait CompositorHandler: Sized {
 #[derive(Debug)]
 pub struct CompositorState {
     wl_compositor: Option<(u32, wl_compositor::WlCompositor)>,
+    wl_subcompositor: Option<(u32, wl_subcompositor::WlSubcompositor)>,
 }
 
 impl CompositorState {
     pub fn new() -> CompositorState {
-        CompositorState { wl_compositor: None }
+        CompositorState { wl_compositor: None, wl_subcompositor: None }
     }
 
     pub fn create_surface<D>(
@@ -103,12 +106,16 @@ pub struct SurfaceData {
 macro_rules! delegate_compositor {
     ($ty: ty) => {
         type __WlCompositor = $crate::reexports::client::protocol::wl_compositor::WlCompositor;
+        type __WlSubcompositor = $crate::reexports::client::protocol::wl_subcompositor::WlSubcompositor;
+        type __WlSubsurface = $crate::reexports::client::protocol::wl_subsurface::WlSubsurface;
         type __WlSurface = $crate::reexports::client::protocol::wl_surface::WlSurface;
         type __WlCallback = $crate::reexports::client::protocol::wl_callback::WlCallback;
 
         $crate::reexports::client::delegate_dispatch!($ty:
             [
                 __WlCompositor,
+                __WlSubcompositor,
+                __WlSubsurface,
                 __WlSurface,
                 __WlCallback
             ] => $crate::compositor::CompositorState
@@ -190,6 +197,47 @@ where
     }
 }
 
+impl DelegateDispatchBase<wl_subcompositor::WlSubcompositor> for CompositorState {
+    type UserData = ();
+}
+
+impl<D> DelegateDispatch<wl_subcompositor::WlSubcompositor, D> for CompositorState
+where
+    D: Dispatch<wl_subcompositor::WlSubcompositor, UserData = Self::UserData>,
+{
+    fn event(
+        _: &mut D,
+        _: &wl_subcompositor::WlSubcompositor,
+        _: wl_subcompositor::Event,
+        _: &(),
+        _: &mut ConnectionHandle,
+        _: &QueueHandle<D>,
+    ) {
+        unreachable!("wl_compositor has no events")
+    }
+}
+
+impl DelegateDispatchBase<wl_subsurface::WlSubsurface> for CompositorState {
+    // TODO what data do we want?
+    type UserData = ();
+}
+
+impl<D> DelegateDispatch<wl_subsurface::WlSubsurface, D> for CompositorState
+where
+    D: Dispatch<wl_subsurface::WlSubsurface, UserData = Self::UserData>,
+{
+    fn event(
+        _: &mut D,
+        _: &wl_subsurface::WlSubsurface,
+        _: wl_subsurface::Event,
+        _: &(),
+        _: &mut ConnectionHandle,
+        _: &QueueHandle<D>,
+    ) {
+        unreachable!("wl_subsurface has no events")
+    }
+}
+
 impl DelegateDispatchBase<wl_callback::WlCallback> for CompositorState {
     type UserData = wl_surface::WlSurface;
 }
@@ -219,6 +267,7 @@ where
 impl<D> RegistryHandler<D> for CompositorState
 where
     D: Dispatch<wl_compositor::WlCompositor, UserData = ()>
+        + Dispatch<wl_subcompositor::WlSubcompositor, UserData = ()>
         + CompositorHandler
         + ProvidesRegistryState
         + 'static,
@@ -231,19 +280,33 @@ where
         interface: &str,
         version: u32,
     ) {
-        if interface == "wl_compositor" {
-            let compositor = state
-                .registry()
-                .bind_once::<wl_compositor::WlCompositor, _, _>(
-                    conn,
-                    qh,
-                    name,
-                    u32::min(version, 4),
-                    (),
-                )
-                .expect("Failed to bind global");
+        match interface {
+            "wl_compositor" => {
+                let compositor = state
+                    .registry()
+                    .bind_cached::<wl_compositor::WlCompositor, _, _, _>(conn, qh, name, || {
+                        (u32::min(version, 4), ())
+                    })
+                    .expect("Failed to bind global");
 
-            state.compositor_state().wl_compositor = Some((name, compositor));
+                state.compositor_state().wl_compositor = Some((name, compositor));
+            }
+
+            "wl_subcompositor" => {
+                let subcompositor = state
+                    .registry()
+                    .bind_cached::<wl_subcompositor::WlSubcompositor, _, _, _>(
+                        conn,
+                        qh,
+                        name,
+                        || (1, ()),
+                    )
+                    .expect("Failed to bind global");
+
+                state.compositor_state().wl_subcompositor = Some((name, subcompositor));
+            }
+
+            _ => (),
         }
     }
 
