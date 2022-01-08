@@ -4,7 +4,7 @@ pub mod pointer;
 use std::{
     fmt::{self, Display, Formatter},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
     },
 };
@@ -248,6 +248,8 @@ pub struct SeatData {
     name: Arc<Mutex<Option<String>>>,
     /// Accumulated state of a pointer before the frame event is called.
     pointer_frame: Arc<Mutex<PointerFrame>>,
+    /// Serial of the previous keyboard enter event.
+    previous_enter_serial: Arc<AtomicU32>,
 }
 
 #[macro_export]
@@ -261,11 +263,31 @@ macro_rules! delegate_seat {
     };
 }
 
+pub(crate) const MAX_SEAT_VERSION: u32 = 7;
+
 #[derive(Debug)]
 struct SeatInner {
     global_name: u32,
     seat: wl_seat::WlSeat,
     data: SeatData,
+}
+
+impl SeatData {
+    pub(crate) fn new() -> SeatData {
+        SeatData {
+            has_keyboard: Arc::new(AtomicBool::new(false)),
+            has_pointer: Arc::new(AtomicBool::new(false)),
+            has_touch: Arc::new(AtomicBool::new(false)),
+            name: Arc::new(Mutex::new(None)),
+            pointer_frame: Arc::new(Mutex::new(PointerFrame {
+                is_single_event_logical_group: false,
+                horizontal_axe: None,
+                vertical_axe: None,
+                axis_source: None,
+            })),
+            previous_enter_serial: Arc::new(AtomicU32::new(0)),
+        }
+    }
 }
 
 impl DelegateDispatchBase<wl_seat::WlSeat> for SeatState {
@@ -364,21 +386,7 @@ where
             let seat = state
                 .registry()
                 .bind_cached(conn, qh, name, || {
-                    (
-                        u32::min(version, 7),
-                        SeatData {
-                            has_keyboard: Arc::new(AtomicBool::new(false)),
-                            has_pointer: Arc::new(AtomicBool::new(false)),
-                            has_touch: Arc::new(AtomicBool::new(false)),
-                            name: Arc::new(Mutex::new(None)),
-                            pointer_frame: Arc::new(Mutex::new(PointerFrame {
-                                is_single_event_logical_group: false,
-                                horizontal_axe: None,
-                                vertical_axe: None,
-                                axis_source: None,
-                            })),
-                        },
-                    )
+                    (u32::min(version, MAX_SEAT_VERSION), SeatData::new())
                 })
                 .expect("failed to bind global");
 

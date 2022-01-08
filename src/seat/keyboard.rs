@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use wayland_client::{
     protocol::{wl_keyboard, wl_surface},
     ConnectionHandle, DelegateDispatch, DelegateDispatchBase, Dispatch, Proxy, QueueHandle, WEnum,
@@ -81,10 +83,10 @@ where
     D: Dispatch<wl_keyboard::WlKeyboard, UserData = Self::UserData> + KeyboardHandler,
 {
     fn event(
-        state: &mut D,
+        data: &mut D,
         keyboard: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
-        _data: &Self::UserData,
+        udata: &Self::UserData,
         conn: &mut ConnectionHandle,
         qh: &QueueHandle<D>,
     ) {
@@ -109,9 +111,10 @@ where
                 }
             }
 
-            wl_keyboard::Event::Enter { serial: _, surface, keys: _ } => {
+            wl_keyboard::Event::Enter { serial, surface, keys: _ } => {
                 // Notify of focus.
-                state.keyboard_focus(conn, qh, keyboard, &surface);
+                udata.previous_enter_serial.store(serial, Ordering::SeqCst);
+                data.keyboard_focus(conn, qh, keyboard, &surface);
 
                 // TODO: Send events to notify of keys being pressed in this event
             }
@@ -119,17 +122,17 @@ where
             wl_keyboard::Event::Leave { serial: _, surface } => {
                 // We can send this event without any other checks in the protocol will guarantee a leave is\
                 // sent before entering a new surface.
-                state.keyboard_release_focus(conn, qh, keyboard, &surface);
+                data.keyboard_release_focus(conn, qh, keyboard, &surface);
             }
 
             wl_keyboard::Event::Key { serial: _, time, key, state: key_state } => match key_state {
                 WEnum::Value(key_state) => match key_state {
                     wl_keyboard::KeyState::Released => {
-                        state.keyboard_release_key(conn, qh, keyboard, time, key);
+                        data.keyboard_release_key(conn, qh, keyboard, time, key);
                     }
 
                     wl_keyboard::KeyState::Pressed => {
-                        state.keyboard_press_key(conn, qh, keyboard, time, key);
+                        data.keyboard_press_key(conn, qh, keyboard, time, key);
                     }
 
                     _ => unreachable!(),
@@ -151,7 +154,7 @@ where
             }
 
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
-                state.keyboard_update_repeat_info(conn, qh, keyboard, rate as u32, delay as u32);
+                data.keyboard_update_repeat_info(conn, qh, keyboard, rate as u32, delay as u32);
             }
 
             _ => unreachable!(),
