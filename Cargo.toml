@@ -22,11 +22,12 @@ thiserror = "1.0.30"
 wayland-backend = "0.1.0-alpha3"
 wayland-client = "0.30.0-alpha3"
 wayland-protocols = { version = "0.30.0-alpha3", features = ["client", "unstable_protocols"] }
-wayland-cursor = "0.30.0-alpha3"
+wayland-cursor = { version = "0.30.0-alpha3", optional = true }
 calloop = { version = "0.9", optional = true }
 
 [features]
-default = ["calloop"]
+default = ["calloop", "pointer"]
+pointer = ["wayland-cursor"]
 dlopen_xkbcommon = []
 
 [build-dependencies]

@@ -154,6 +154,8 @@ where
     }
 }
 
+pub(crate) const WL_SHM_VERSION: u32 = 1;
+
 impl<D> RegistryHandler<D> for ShmState
 where
     D: Dispatch<wl_shm::WlShm, UserData = ()> + ShmHandler + ProvidesRegistryState + 'static,
@@ -169,7 +171,7 @@ where
         if interface == "wl_shm" {
             let shm = state
                 .registry()
-                .bind_once::<wl_shm::WlShm, _, _>(conn, qh, name, 1, ())
+                .bind_cached::<wl_shm::WlShm, _, _, _>(conn, qh, name, || (WL_SHM_VERSION, ()))
                 .expect("Failed to bind global");
 
             state.shm_state().wl_shm = Some((name, shm));

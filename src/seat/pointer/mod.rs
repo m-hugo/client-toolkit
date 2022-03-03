@@ -1,3 +1,6 @@
+#[cfg(feature = "pointer")]
+pub mod theme;
+
 use std::sync::Mutex;
 
 use wayland_client::{

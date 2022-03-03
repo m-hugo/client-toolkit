@@ -209,6 +209,8 @@ where
     }
 }
 
+pub(crate) const WL_COMPOSITOR_VERSION: u32 = 4;
+
 impl<D> RegistryHandler<D> for CompositorState
 where
     D: Dispatch<wl_compositor::WlCompositor, UserData = ()>
@@ -227,13 +229,9 @@ where
         if interface == "wl_compositor" {
             let compositor = state
                 .registry()
-                .bind_once::<wl_compositor::WlCompositor, _, _>(
-                    conn,
-                    qh,
-                    name,
-                    u32::min(version, 4),
-                    (),
-                )
+                .bind_cached::<wl_compositor::WlCompositor, _, _, _>(conn, qh, name, || {
+                    (u32::min(version, WL_COMPOSITOR_VERSION), ())
+                })
                 .expect("Failed to bind global");
 
             state.compositor_state().wl_compositor = Some((name, compositor));
