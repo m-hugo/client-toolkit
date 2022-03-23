@@ -86,16 +86,27 @@ use super::CreatePoolError;
 /// Only one buffer can be attributed to a given key.
 #[derive(Debug)]
 pub struct MultiPool<K: PartialEq + Clone> {
-    buffer_list: Vec<BufferHandle<K>>,
+    buffer_list: Vec<BufferAllocation<K>>,
     pub(crate) inner: RawPool,
 }
 
+/// A buffer allocation within a pool.
 #[derive(Debug)]
-struct BufferHandle<K: PartialEq + Clone> {
+struct BufferAllocation<K: PartialEq + Clone> {
+    /// Whether the compositor has freed the buffer.
+    ///
+    /// This is `false` when the buffer is in use by the compositor, meaning the buffer contents cannot be
+    /// modified and the buffer may not be destroyed.
     free: Arc<AtomicBool>,
+    /// Size of the buffer allocation.
     size: usize,
+    /// Space used within the buffer allocation.
+    ///
+    /// This is needed since we over-allocate by 5% to allow small resizes to not need a reallocation.
     used: usize,
+    /// Offset within the pool.
     offset: usize,
+    /// Protocol object associated with the allocation.
     buffer: Option<wl_buffer::WlBuffer>,
     key: K,
 }
@@ -108,6 +119,7 @@ impl<K: PartialEq + Clone> MultiPool<K> {
     pub fn resize(&mut self, size: usize, conn: &mut ConnectionHandle) -> io::Result<()> {
         self.inner.resize(size, conn)
     }
+
     /// Removes the buffer with the given key from the pool and rearranges the others
     pub fn remove(&mut self, key: &K, conn: &mut ConnectionHandle) {
         if let Some((i, buffer)) = self.buffer_list.iter().enumerate().find(|b| b.1.key.eq(key)) {
@@ -125,6 +137,7 @@ impl<K: PartialEq + Clone> MultiPool<K> {
             }
         }
     }
+
     /// Returns the buffer associated with the given key and its offset (usize) in the mempool.
     ///
     /// The offset can be used to determine whether or not a buffer was moved in the mempool
@@ -250,7 +263,7 @@ impl<K: PartialEq + Clone> MultiPool<K> {
                 )
                 .ok()?;
             buffer = Proxy::from_id(conn, buffer_id).ok()?;
-            self.buffer_list.push(BufferHandle {
+            self.buffer_list.push(BufferAllocation {
                 offset,
                 used: 0,
                 free,
@@ -300,8 +313,8 @@ impl wayland_client::backend::ObjectData for BufferObjectData {
             msg.sender_id.interface(),
             wl_buffer::WlBuffer::interface()
         ));
-        debug_assert!(msg.opcode == 0);
         // wl_buffer only has a single event: wl_buffer.release
+        debug_assert_eq!(msg.opcode, 0);
         self.free.store(true, Ordering::Relaxed);
         None
     }
