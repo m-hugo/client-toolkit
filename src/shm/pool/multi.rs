@@ -90,6 +90,22 @@ pub struct MultiPool<K: PartialEq + Clone> {
     pub(crate) inner: RawPool,
 }
 
+/// Error associated with buffer access.
+#[derive(Debug, thiserror::Error)]
+pub enum BufferAccessError {
+    /// The buffer is being used by the compositor.
+    ///
+    /// You will have to wait in order to use this buffer again.
+    #[error("the buffer is being used by the compositor")]
+    InUse,
+
+    /// The key used to access the buffer is not valid.
+    ///
+    /// This may happen if the buffer was destroyed or no buffer has been created using the key.
+    #[error("the key used to access the buffer is not valid")]
+    InvalidKey,
+}
+
 /// A buffer allocation within a pool.
 #[derive(Debug)]
 struct BufferAllocation<K: PartialEq + Clone> {
@@ -108,6 +124,8 @@ struct BufferAllocation<K: PartialEq + Clone> {
     offset: usize,
     /// Protocol object associated with the allocation.
     buffer: Option<wl_buffer::WlBuffer>,
+    /// The format of the allocation.
+    format: wl_shm::Format,
     key: K,
 }
 
@@ -120,9 +138,12 @@ impl<K: PartialEq + Clone> MultiPool<K> {
         self.inner.resize(size, conn)
     }
 
+    // TODO: Should return result
     /// Removes the buffer with the given key from the pool and rearranges the others
     pub fn remove(&mut self, key: &K, conn: &mut ConnectionHandle) {
-        if let Some((i, buffer)) = self.buffer_list.iter().enumerate().find(|b| b.1.key.eq(key)) {
+        // TODO: Rearrangement is probably wrong.
+        if let Some((i, buffer)) = self.buffer_list.iter().enumerate().find(|&(_, b)| b.key.eq(key))
+        {
             let mut offset = buffer.offset;
             self.buffer_list.remove(i);
             for buffer_handle in &mut self.buffer_list {
@@ -138,26 +159,68 @@ impl<K: PartialEq + Clone> MultiPool<K> {
         }
     }
 
+    // TODO: Let's just return this was successful and the buffer contents.
+    // The actual WlBuffer should not be accessible unless you obtain an `Acquire` which derefs into a
+    // WlBuffer. The Acquire should be #[must_use]
+
     /// Returns the buffer associated with the given key and its offset (usize) in the mempool.
     ///
     /// The offset can be used to determine whether or not a buffer was moved in the mempool
     /// and by consequence if it should be damaged partially or fully.
     ///
     /// When it's not possible to use the buffer associated with the key, None is returned.
+    #[forbid(clippy::integer_arithmetic)]
     pub fn create_buffer(
         &mut self,
-        width: i32,
-        stride: i32,
-        height: i32,
+        width: u32,
+        height: u32,
+        bytes_per_pixel: u32,
         key: &K,
         format: wl_shm::Format,
         conn: &mut ConnectionHandle,
     ) -> Option<(usize, wl_buffer::WlBuffer, &mut [u8])>
-    where
-        K: std::fmt::Debug,
+// where
+    //     K: std::fmt::Debug,
     {
+        // This function must only use checked arithmetic since we want to prevent protocol errors given
+        // invalid parameters at release (due to overflow).
+
+        // Since wayland takes i32 for all the parameters, meaning the valid values stop at i32::MAX.
+        const MAX: u32 = i32::MAX as u32;
+
+        if width > MAX || height > MAX || bytes_per_pixel > MAX {
+            todo!("Invalid params: too large")
+        }
+
+        let stride = match width.checked_mul(bytes_per_pixel) {
+            Some(stride) if stride > MAX => {
+                todo!("invalid params")
+            },
+
+            Some(stride) => stride,
+
+            None => todo!("invalid params: too large"),
+        };
+
+        // Width may not be larger than the stride. However the width and stride may be equal in the case of
+        // 1 by X buffers where the bytes per pixel is 1.
+        if width > stride {
+            todo!("invalid params")
+        }
+
+        let size = match stride.checked_mul(height) {
+            Some(size) if size > MAX => {
+                todo!("invalid params: too large")
+            },
+
+            Some(size) => size,
+
+            None => todo!(),
+        };
+
         let mut found_key = false;
         let mut offset = 0;
+        let stride = bytes_per_pixel * width;
         let size = (stride * height) as usize;
         let mut index = None;
 
@@ -264,11 +327,12 @@ impl<K: PartialEq + Clone> MultiPool<K> {
                 .ok()?;
             buffer = Proxy::from_id(conn, buffer_id).ok()?;
             self.buffer_list.push(BufferAllocation {
-                offset,
-                used: 0,
                 free,
-                buffer: Some(buffer.clone()),
                 size,
+                used: 0,
+                offset,
+                buffer: Some(buffer.clone()),
+                format,
                 key: key.clone(),
             });
         } else {
@@ -280,6 +344,85 @@ impl<K: PartialEq + Clone> MultiPool<K> {
         self.buffer_list[index?].free.swap(false, Ordering::Relaxed);
 
         Some((offset, buffer, slice))
+    }
+
+    pub fn resize_buffer(
+        &mut self,
+        conn: &mut ConnectionHandle<'_>,
+        key: &K,
+        width: i32,
+        stride: i32,
+        height: i32,
+    ) -> Result<(), BufferAccessError> {
+        // The buffer cannot be resized if it is in use.
+        let alloc = self
+            .buffer_list
+            .iter_mut()
+            .find(|alloc| &alloc.key == key)
+            .ok_or(BufferAccessError::InvalidKey)?;
+
+        if !alloc.free.load(Ordering::Relaxed) {
+            return Err(BufferAccessError::InUse.into());
+        }
+
+        let size = (stride * height) as usize;
+
+        // No resize occurs
+        if size == alloc.used {
+            return Ok(());
+        }
+
+        // The buffer is available, check if there is room to expand the buffer within the current allocation.
+        let offset = if size > alloc.size {
+            // Current allocation is too small, find the first available space in the allocation that fits
+            // the required size.
+
+            // Peek forward and see if there is space to expand forward.
+            // Otherwise walk further into the memory.
+            // No room is available, expand the memory allocation for additional space.
+            todo!("find empty space")
+        } else {
+            // Current allocation is large enough to continue using.
+            alloc.offset
+        };
+
+        if let Some(buffer) = alloc.buffer.take() {
+            buffer.destroy(conn);
+        }
+
+        let buffer = todo!();
+        alloc.buffer = Some(buffer);
+
+        // TODO
+
+        todo!()
+    }
+
+    /// Acquires the content of a buffer, returning a mutable reference to the buffer contents.
+    ///
+    /// This function may return [`Err`] in one of the following circumstances:
+    /// - The buffer is still in use by the compositor.
+    /// - The key is not associated with a buffer allocation.
+    ///
+    /// Note that changing the content of a buffer does not cause presentation. You will need to attach the
+    /// buffer to a `WlSurface` and commit the surface to cause presentation.
+    pub fn acquire_buffer(&mut self, key: &K) -> Result<&mut [u8], BufferAccessError> {
+        let alloc = self
+            .buffer_list
+            .iter()
+            .find(|alloc| &alloc.key == key)
+            .ok_or(BufferAccessError::InvalidKey)?;
+
+        if !alloc.free.load(Ordering::Relaxed) {
+            return Err(BufferAccessError::InUse);
+        }
+
+        let buffer = &mut self.inner.mmap()[alloc.offset..][..alloc.size];
+        // TODO: This is wrong to lock here, but we have no way to assert the user has made the buffer
+        // inaccessible while the compositor has the buffer?
+        alloc.free.swap(false, Ordering::Relaxed);
+
+        Ok(buffer)
     }
 }
 

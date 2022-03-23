@@ -7,7 +7,7 @@ use wayland_client::{
 
 use crate::registry::{ProvidesRegistryState, RegistryHandler};
 
-use self::pool::{raw::RawPool, simple::SimplePool, CreatePoolError};
+use self::pool::{raw::RawPool, CreatePoolError};
 
 pub trait ShmHandler {
     fn shm_state(&mut self) -> &mut ShmState;
@@ -22,20 +22,6 @@ pub struct ShmState {
 impl ShmState {
     pub fn new() -> ShmState {
         ShmState { wl_shm: None, formats: vec![] }
-    }
-
-    pub fn new_simple_pool<D, U>(
-        &self,
-        len: usize,
-        conn: &mut ConnectionHandle,
-        qh: &QueueHandle<D>,
-        udata: U,
-    ) -> Result<SimplePool, CreatePoolError>
-    where
-        D: Dispatch<wl_shm_pool::WlShmPool, UserData = U> + 'static,
-        U: Send + Sync + 'static,
-    {
-        Ok(SimplePool { inner: self.new_raw_pool(len, conn, qh, udata)? })
     }
 
     /// Creates a new raw pool.
