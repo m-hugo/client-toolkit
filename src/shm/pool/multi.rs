@@ -75,8 +75,12 @@ use wayland_client::{
     protocol::{wl_buffer, wl_shm, wl_shm_pool},
     ConnectionHandle, Proxy, WEnum,
 };
+use wayland_client::{Dispatch, QueueHandle};
+
+use crate::shm::ShmState;
 
 use super::raw::RawPool;
+use super::CreatePoolError;
 
 /// This pool manages buffers associated with keys.
 /// Only one buffer can be attributed to a given key.
@@ -94,12 +98,6 @@ struct BufferHandle<K: PartialEq + Clone> {
     offset: usize,
     buffer: Option<wl_buffer::WlBuffer>,
     key: K,
-}
-
-impl<E: PartialEq + Clone> From<RawPool> for MultiPool<E> {
-    fn from(inner: RawPool) -> Self {
-        Self { buffer_list: Vec::new(), inner }
-    }
 }
 
 impl<K: PartialEq + Clone> MultiPool<K> {
@@ -271,6 +269,23 @@ impl<K: PartialEq + Clone> MultiPool<K> {
         Some((offset, buffer, slice))
     }
 }
+
+impl ShmState {
+    pub fn new_multi<D, K, U>(
+        &self,
+        conn: &mut ConnectionHandle<'_>,
+        qh: &QueueHandle<D>,
+        udata: U,
+    ) -> Result<MultiPool<K>, CreatePoolError>
+    where
+        D: Dispatch<wl_shm_pool::WlShmPool, UserData = U> + 'static,
+        K: Clone + PartialEq,
+        U: Send + Sync + 'static,
+    {
+        Ok(MultiPool { buffer_list: Vec::new(), inner: self.new_raw_pool(0, conn, qh, udata)? })
+    }
+}
+
 struct BufferObjectData {
     free: Arc<AtomicBool>,
 }
