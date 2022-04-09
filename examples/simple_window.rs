@@ -11,9 +11,8 @@ use smithay_client_toolkit::{
         pointer::{PointerHandler, PointerScroll},
         Capability, SeatHandler, SeatState,
     },
-    shell::xdg::{
-        window::{Window, WindowConfigure, WindowHandler, XdgWindowState},
-        XdgShellHandler, XdgShellState,
+    shell::{
+    	layer::*,
     },
     shm::{pool::raw::RawPool, ShmHandler, ShmState},
 };
@@ -21,6 +20,7 @@ use wayland_client::{
     protocol::{wl_buffer, wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, ConnectionHandle, Dispatch, QueueHandle,
 };
+use smithay_client_toolkit::delegate_layer;
 
 fn main() {
     env_logger::init();
@@ -40,9 +40,8 @@ fn main() {
         output_state: OutputState::new(),
         compositor_state: CompositorState::new(),
         shm_state: ShmState::new(),
-        xdg_shell_state: XdgShellState::new(),
-        xdg_window_state: XdgWindowState::new(),
-
+        layer_state: LayerState::new(),
+        
         exit: false,
         first_configure: true,
         pool: None,
@@ -72,19 +71,12 @@ fn main() {
 
     let surface = simple_window.compositor_state.create_surface(&mut conn.handle(), &qh).unwrap();
 
-    let window = Window::builder()
-        .title("A wayland window")
-        // GitHub does not let projects use the `org.github` domain but the `io.github` domain is fine.
-        .app_id("io.github.smithay.client-toolkit.SimpleWindow")
-        .min_size((256, 256))
-        .map(
-            &mut conn.handle(),
-            &qh,
-            &simple_window.xdg_shell_state,
-            &mut simple_window.xdg_window_state,
-            surface,
-        )
-        .expect("window creation");
+    let window = LayerSurface::builder()
+		.size((256, 256))
+		.anchor(Anchor::BOTTOM)
+		.keyboard_interactivity(KeyboardInteractivity::OnDemand)//Exclusive
+		.map(&mut conn.handle(), &qh, &mut simple_window.layer_state, surface, Layer::Top)//Overlay	
+		.expect("window creation");   
 
     simple_window.window = Some(window);
 
@@ -106,8 +98,7 @@ struct SimpleWindow {
     output_state: OutputState,
     compositor_state: CompositorState,
     shm_state: ShmState,
-    xdg_shell_state: XdgShellState<Self>,
-    xdg_window_state: XdgWindowState,
+    layer_state: LayerState,
 
     exit: bool,
     first_configure: bool,
@@ -115,7 +106,7 @@ struct SimpleWindow {
     width: u32,
     height: u32,
     buffer: Option<wl_buffer::WlBuffer>,
-    window: Option<Window>,
+    window: Option<LayerSurface>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     keyboard_focus: bool,
     pointer: Option<wl_pointer::WlPointer>,
@@ -178,37 +169,34 @@ impl OutputHandler for SimpleWindow {
     }
 }
 
-impl XdgShellHandler for SimpleWindow {
-    fn xdg_shell_state(&mut self) -> &mut XdgShellState<Self> {
-        &mut self.xdg_shell_state
-    }
-}
-
-impl WindowHandler for SimpleWindow {
-    fn xdg_window_state(&mut self) -> &mut XdgWindowState {
-        &mut self.xdg_window_state
+impl LayerHandler for SimpleWindow  {
+    fn layer_state(&mut self) -> &mut LayerState{
+    	&mut self.layer_state
     }
 
-    fn request_close(&mut self, _: &mut ConnectionHandle, _: &QueueHandle<Self>, _: &Window) {
-        self.exit = true;
+    /// Called when the surface will no longer be shown.
+    ///
+    /// This may occur as a result of the output the layer is placed on being destroyed or the user has caused
+    /// the layer to be removed.
+    ///
+    /// You should drop the layer you have when this event is received.
+    fn closed(&mut self, conn: &mut ConnectionHandle, qh: &QueueHandle<Self>, layer: &LayerSurface){
+    	self.exit = true;
     }
 
     fn configure(
         &mut self,
         conn: &mut ConnectionHandle,
         qh: &QueueHandle<Self>,
-        _window: &Window,
-        configure: WindowConfigure,
+        _window: &LayerSurface,
+        configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
+    	println!("test0");
         match configure.new_size {
-            Some(size) => {
+            size => {
                 self.width = size.0;
                 self.height = size.1;
-            }
-            None => {
-                self.width = 256;
-                self.height = 256;
             }
         }
 
@@ -284,7 +272,7 @@ impl KeyboardHandler for SimpleWindow {
         _: &[u32],
         keysyms: &[u32],
     ) {
-        if self.window.as_ref().map(Window::wl_surface) == Some(surface) {
+        if self.window.as_ref().map(LayerSurface::wl_surface) == Some(surface) {
             println!("Keyboard focus on window with pressed syms: {:?}", keysyms);
             self.keyboard_focus = true;
         }
@@ -298,7 +286,7 @@ impl KeyboardHandler for SimpleWindow {
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        if self.window.as_ref().map(Window::wl_surface) == Some(surface) {
+        if self.window.as_ref().map(LayerSurface::wl_surface) == Some(surface) {
             println!("Release keyboard focus on window");
             self.keyboard_focus = false;
         }
@@ -347,7 +335,7 @@ impl PointerHandler for SimpleWindow {
         surface: &wl_surface::WlSurface,
         entered: (f64, f64),
     ) {
-        if self.window.as_ref().map(Window::wl_surface) == Some(surface) {
+        if self.window.as_ref().map(LayerSurface::wl_surface) == Some(surface) {
             println!("Pointer focus on window, entering at {:?}", entered);
             self.pointer_focus = true;
         }
@@ -360,7 +348,7 @@ impl PointerHandler for SimpleWindow {
         _pointer: &wl_pointer::WlPointer,
         surface: &wl_surface::WlSurface,
     ) {
-        if self.window.as_ref().map(Window::wl_surface) == Some(surface) {
+        if self.window.as_ref().map(LayerSurface::wl_surface) == Some(surface) {
             println!("Release pointer focus on window");
             self.pointer_focus = false;
         }
@@ -514,16 +502,14 @@ delegate_seat!(SimpleWindow);
 delegate_keyboard!(SimpleWindow);
 delegate_pointer!(SimpleWindow);
 
-delegate_xdg_shell!(SimpleWindow);
-delegate_xdg_window!(SimpleWindow);
+delegate_layer!(SimpleWindow);
 
 delegate_registry!(SimpleWindow: [
     CompositorState,
     OutputState,
     ShmState,
     SeatState,
-    XdgShellState<Self>,
-    XdgWindowState,
+    LayerState,
 ]);
 
 impl ProvidesRegistryState for SimpleWindow {
